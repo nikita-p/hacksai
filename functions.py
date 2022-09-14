@@ -55,7 +55,17 @@ def preprocess(filename):
     df['Учеба'] = df['Учеба'].astype('category')
     df.drop(['Уч_Заведение'], axis=1, inplace=True)
 
-    df.drop(['Пособие', 'Опекунство', 'Где_Находится_УЗ', 'Страна_ПП', 
+    school_loc = df['Где_Находится_УЗ'].fillna('')
+    barnaul_loc = school_loc.str.contains('барнаул', case=False)
+    alt_loc = school_loc.str.contains('алтайский', case=False)
+    df['МестоУчебы'] = 'д' # другое
+    df.loc[alt_loc, 'МестоУчебы'] = 'к' # алтайский край
+    df.loc[barnaul_loc, 'МестоУчебы'] = 'б' # барнаул
+    df['МестоУчебы'] = df['МестоУчебы'].astype('category')
+    df.drop(['Где_Находится_УЗ'], axis=1, inplace=True)
+
+
+    df.drop(['Пособие', 'Опекунство', 'Страна_ПП', 
              'Регион_ПП', 'Город_ПП', 'Страна_Родители', 'Село', 'Иностранец'], axis=1, inplace=True)
     return df
 
