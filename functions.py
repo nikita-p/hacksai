@@ -9,7 +9,7 @@ def preprocess(filename):
     df['Код2'] = df['Код_группы'].apply(lambda x: str(x)[2:4]).astype('category')
     df['Код3'] = df['Код_группы'].apply(lambda x: str(x)[2:]).astype('category')
 
-    df['Муж'] = (df['Пол'].str.lower()=='муж').astype(int)
+    df['Муж'] = (df['Пол'].str.lower()=='муж').astype(bool)
     df.drop(['Пол'], axis=1, inplace=True)
     
     df['Основания'] = df['Основания'].str.lower().astype('category')
@@ -35,9 +35,10 @@ def preprocess(filename):
     
     df['СрБаллАттестата'] = np.where(df['СрБаллАттестата']<=5, df['СрБаллАттестата']*100/5, df['СрБаллАттестата'])
 
-    schools = ['сош', 'мбоу', 'кгбоу', 'мкоу', 'кгу', 'сш', 'соу', 'моу', 'мсош', 'школа', 'лицей', 'гимназия', 'академия', 'корпус', 'школы']
-    colleges = ['пу', 'нпо', 'спо', 'впо', 'спту', 'училище', 'техникум', 'колледж', 'коледж', 'коллежд', 'колледжа', 'профлицей']
+    schools = ['сош', 'мбоу', 'мкоу', 'кгу', 'сш', 'соу', 'моу', 'мсош', 'школа', 'лицей', 'гимназия', 'академия', 'корпус', 'школы']
+    colleges = ['кгбоу', 'пу', 'нпо', 'спо', 'впо', 'спту', 'училище', 'техникум', 'колледж', 'коледж', 'коллежд', 'колледжа', 'профлицей', 'профессионально']
     universities = ['фгбоу', 'фбгоу', 'университет', 'институт', 'универститет', 'универсиет', 'консерватория', 'алтгу', 'взфэи', 'бюи', 'уриверситет']
+    asu_uni = [r'алт\w+\s+гос\w+\sуни\w+', 'алтгу']
 
     places = df['Уч_Заведение'].fillna('')
     def f(df, l):
@@ -55,6 +56,11 @@ def preprocess(filename):
     df.loc[is_university, 'Учеба'] = 'у'
     df.loc[is_college, 'Учеба'] = 'к'
     df.loc[is_school, 'Учеба'] = 'ш'
+    for asu in asu_uni:
+        true_place = places.str.contains(asu, regex=True, case=False)
+        df.loc[true_place, 'Учеба'] = 'алтгу'
+    
+    
     df['Учеба'] = df['Учеба'].astype('category')
     df.drop(['Уч_Заведение'], axis=1, inplace=True)
 
@@ -79,11 +85,18 @@ def preprocess(filename):
     }
     loc_list2 = {
         'алтайский' : 'алт',
+        # 'новосиб' : 'нсо',
+        # 'кемер': 'кем',
+        r'алтай\b': 'ралт',
     }
     loc_list3 = {
         'барнаул' : 'брн',
         'бийск' : 'бск',
         'новоалтайск' : 'нва',
+        'заринск': 'зрн',
+        'рубцовск': 'рбц',
+        'славгород': 'слв',
+        'яровое': 'слв',
     }
     df['МестоЖит'] = 'д' # другое
 
@@ -98,10 +111,17 @@ def preprocess(filename):
     fill_location('Страна_ПП', 'МестоЖит', loc_list1)
     fill_location('Регион_ПП', 'МестоЖит', loc_list2)
     fill_location('Город_ПП', 'МестоЖит', loc_list3)
+    df['МестоЖит'] = np.where((df['Село']>0)&(df['МестоЖит']=='алт'), 'алтс', df['МестоЖит'])
+    
     df['МестоЖит'] = df['МестоЖит'].astype('category')
 
     df.drop(['Пособие', 'Опекунство', 'Общежитие',
         'Страна_Родители', 'Село', 'Иностранец'], axis=1, inplace=True)
+    
+    if 'Статус' in df:
+        # только для train
+        df.drop_duplicates(inplace=True)
+    
     return df
 
 def train_default_catboost(X, y, X_test, savepath='catboost_default.csv'):
