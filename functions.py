@@ -104,10 +104,10 @@ def preprocess(filename):
         'Страна_Родители', 'Село', 'Иностранец'], axis=1, inplace=True)
     return df
 
-def train_default_catboost(X, y, X_test, savepath='catboost_default.csv'):
+def train_default_catboost(X, y, X_test, params={}, savepath='catboost_default.csv'):
     """0.7919 public testboard"""
     from sklearn.model_selection import train_test_split
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.3)
     print(f'Train len: {X_train.shape[0]}, val len: {X_val.shape[0]}, test len: {X_test.shape[0]}')
 
     from catboost import CatBoostClassifier, Pool
@@ -116,10 +116,11 @@ def train_default_catboost(X, y, X_test, savepath='catboost_default.csv'):
     cat_features=np.arange(len(X_train.columns))[X_train.dtypes == 'category']
     data = Pool(X_train, label=y_train, cat_features=cat_features)
 
-    clf = CatBoostClassifier(verbose=False)
+    clf = CatBoostClassifier(verbose=False, **params)
 
     clf.fit(data)
 
+    print(clf.get_all_params())
     from sklearn.metrics import f1_score
 
     pred0 = clf.predict(X_train, prediction_type='Class')
@@ -127,14 +128,82 @@ def train_default_catboost(X, y, X_test, savepath='catboost_default.csv'):
 
     f1_train = f1_score(y_train, pred0, average='macro', zero_division = 0)
     f1_val = f1_score(y_val, pred, average='macro', zero_division = 0)
-
+    f1_val_classes = f1_score(y_val, pred, average=None)
+    
     print('F1 train:', f1_train, 'F1 test:', f1_val)
+    print('F1 test classes:', f1_val_classes)
 
     print(dict(zip(X_train.columns, clf.feature_importances_)))
+    
+    if savepath is None:
+        return clf
 
-    clf = CatBoostClassifier(verbose=False)
+    clf = CatBoostClassifier(verbose=False, **params)
     clf.fit(Pool(X, label=y, cat_features=cat_features))
+    
+    print('Final clf params:')
+    print(clf.get_all_params())
 
     pred_test = clf.predict(X_test, prediction_type='Class').ravel()
     pd.Series(pred_test, index=X_test.index, name='Статус').replace({0: -1, 1: 3, 2: 4}).to_csv(savepath)
     return clf
+
+def cross_validation(X, y, params, fold_count: int = 3):
+    from catboost import cv, Pool
+    cat_features = np.arange(len(X.columns))[X.dtypes == 'category']
+    
+    cv_data = cv(
+        params=params,
+        pool=Pool(X, label=y, cat_features=cat_features),
+        fold_count=fold_count,
+        shuffle=True,
+        partition_random_seed=0,
+        plot=False,
+        stratified=True, 
+        verbose=False,
+        return_models=False,
+    )    
+    return cv_data
+
+def plot_cv_learning_curve(cv_data, param, fold_count, title=None):
+    import matplotlib.pyplot as plt
+    def plot_line(x, y, yerr, ax, label):
+        label = f'{label} ({y.iloc[-1]:.3f}±{yerr.iloc[-1]:.3f})'
+        ax.errorbar(x, y, label=label)
+        ax.fill_between(x, y-yerr, y+yerr, alpha=0.3)
+    
+    fig, ax = plt.subplots(1, 1, dpi=120)
+    plot_line(
+        cv_data.iterations,
+        cv_data[f'train-{param}-mean'], 
+        cv_data[f'train-{param}-std']/np.sqrt(fold_count), 
+        ax, 'train')
+
+    plot_line(
+        cv_data.iterations,
+        cv_data[f'test-{param}-mean'], 
+        cv_data[f'test-{param}-std']/np.sqrt(fold_count), 
+        ax, 'val')
+
+    ax.set(xlabel='Iteration', ylabel='F1 Macro', xlim=(0, None), title='' if title is None else title)
+    ax.legend();
+    return
+
+def gridsearch(X, y, params, fold_count=3, savefolder='./results/images'):
+    from sklearn.model_selection import ParameterGrid
+    
+    pgrid = ParameterGrid(params)
+    plt.ioff()
+    for pars in pgrid:
+        print(pars)
+        cv_data = cross_validation(X, y, pars, fold_count)
+        
+        metric = pars.pop('eval_metric')
+        title = ';'.join(map(lambda x: f'{x[0]}:{x[1]}', pars.items()))
+        
+        plot_cv_learning_curve(cv_data, metric, fold_count, title)
+        plt.savefig(f'{savefolder}/cv_{title}.png')
+        print(f'cv_{title}.png', 'is done')
+    # plt.ion()
+    return 
+    
