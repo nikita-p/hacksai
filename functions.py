@@ -20,6 +20,12 @@ def preprocess(filename):
     df['Год_Рождения'] = pd.to_datetime(df['Дата_Рождения']).dt.year
     df.drop(['Дата_Рождения'], axis=1, inplace=True)
 
+    # исправляю поля
+    df['Год_Поступления'] = np.where(df['Год_Поступления'] < df['Год_Окончания_УЗ'].fillna(0), df['Год_Окончания_УЗ'], df['Год_Поступления']).astype(int)
+    df['Год_Рождения'] = np.where(df['Год_Поступления'] - df['Год_Рождения'] < 13, df['Год_Поступления']-18, df['Год_Рождения'])
+    if 45077 in df.index:
+        df.at[45077, 'Год_Поступления'] = 2012
+    
     df['Возраст_Поступления'] = df['Год_Поступления'] - df['Год_Рождения']
     df['Перерыв'] = (df['Год_Поступления'] - df['Год_Окончания_УЗ']).fillna(0).astype(int)
     df.drop(['Год_Окончания_УЗ'], axis=1, inplace=True)
@@ -105,9 +111,8 @@ def preprocess(filename):
     return df
 
 def train_default_catboost(X, y, X_test, params={}, savepath='catboost_default.csv'):
-    """0.7919 public testboard"""
     from sklearn.model_selection import train_test_split
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.3)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, stratify=y)
     print(f'Train len: {X_train.shape[0]}, val len: {X_val.shape[0]}, test len: {X_test.shape[0]}')
 
     from catboost import CatBoostClassifier, Pool
@@ -116,7 +121,7 @@ def train_default_catboost(X, y, X_test, params={}, savepath='catboost_default.c
     cat_features=np.arange(len(X_train.columns))[X_train.dtypes == 'category']
     data = Pool(X_train, label=y_train, cat_features=cat_features)
 
-    clf = CatBoostClassifier(verbose=False, **params)
+    clf = CatBoostClassifier(verbose=False, cat_features=cat_features, **params)
 
     clf.fit(data)
 
@@ -137,32 +142,35 @@ def train_default_catboost(X, y, X_test, params={}, savepath='catboost_default.c
     
     if savepath is None:
         return clf
-
-    clf = CatBoostClassifier(verbose=False, **params)
-    clf.fit(Pool(X, label=y, cat_features=cat_features))
+    del clf
+    
+    clf_final = CatBoostClassifier(verbose=False, **params)
+    data = Pool(X, y, cat_features=cat_features)
+    clf_final.fit(data)
     
     print('Final clf params:')
-    print(clf.get_all_params())
+    print(clf_final.get_all_params())
 
-    pred_test = clf.predict(X_test, prediction_type='Class').ravel()
+    pred_test = clf_final.predict(X_test, prediction_type='Class').ravel()
     pd.Series(pred_test, index=X_test.index, name='Статус').replace({0: -1, 1: 3, 2: 4}).to_csv(savepath)
-    return clf
+    return clf_final
 
 def cross_validation(X, y, params, fold_count: int = 3):
     from catboost import cv, Pool
     cat_features = np.arange(len(X.columns))[X.dtypes == 'category']
     
-    cv_data = cv(
+    cv_data, models = cv(
         params=params,
-        pool=Pool(X, label=y, cat_features=cat_features),
+        pool=Pool(X, label=y, cat_features=cat_features, weight=np.ones_like(y)),
         fold_count=fold_count,
         shuffle=True,
         partition_random_seed=0,
         plot=False,
         stratified=True, 
         verbose=False,
-        return_models=False,
+        return_models=True,
     )    
+    # print(models[0].get_all_params())
     return cv_data
 
 def plot_cv_learning_curve(cv_data, param, fold_count, title=None):
